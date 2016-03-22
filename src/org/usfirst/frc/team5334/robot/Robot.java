@@ -100,7 +100,9 @@ public class Robot extends SampleRobot {
     
     boolean shootLowGoal = false;
     
-    final int FIVE_SECONDS = 250;
+    final int FIVE_SECONDS = 550;
+    final int DEFAULT_BOULDER_TIMEOUT = 63;
+    int boulderTimeOut = DEFAULT_BOULDER_TIMEOUT;
     
     CameraServer camera;
     
@@ -573,6 +575,7 @@ public class Robot extends SampleRobot {
 		boulderLimitOverride = false;
 		
 		shootLowGoal = false;
+		boulderTimeOut = DEFAULT_BOULDER_TIMEOUT;
     }
     
     public void runStartMode () {
@@ -745,13 +748,18 @@ public class Robot extends SampleRobot {
         		boulderIn = false;
         		runBoulder();
 
+        		if (boulderLimitOverride) {
+        			boulderTimeOut = 150;
+        		} else {
+        			boulderTimeOut = DEFAULT_BOULDER_TIMEOUT;
+        		}
         		boulderLimitOverride = false;
         	}
     		
     	
     	} else {
     		boulderOutCount++;
-    		if (boulderOutCount > 63) {
+    		if (boulderOutCount > boulderTimeOut) {
     			boulderOutCount = 0;
     			// stop shooter motors
     			shooterOut = false;
