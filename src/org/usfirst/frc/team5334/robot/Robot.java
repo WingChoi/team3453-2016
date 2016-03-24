@@ -106,6 +106,8 @@ public class Robot extends SampleRobot {
     
     CameraServer camera;
     
+    double FourBarPowerMultiplier = 0;
+    
     final String defaultAuto = "Default";
     final String customAuto = "My Auto";
     SendableChooser chooser;
@@ -221,6 +223,7 @@ public class Robot extends SampleRobot {
     	switch(autoSelected) {
     	case customAuto:
             myRobot.setSafetyEnabled(false);
+            revRobot.setSafetyEnabled(false);
             myRobot.drive(-0.5, 1.0);	// spin at half speed
             Timer.delay(2.0);		//    for 2 seconds
             myRobot.drive(0.0, 0.0);	// stop robot
@@ -228,6 +231,7 @@ public class Robot extends SampleRobot {
     	case defaultAuto:
     	default:
             myRobot.setSafetyEnabled(false);
+            revRobot.setSafetyEnabled(false);
             myRobot.drive(-0.5, 0.0);	// drive forwards half speed
             Timer.delay(2.0);		//    for 2 seconds
             myRobot.drive(0.0, 0.0);	// stop robot
@@ -239,7 +243,8 @@ public class Robot extends SampleRobot {
      * Runs the motors with arcade steering.
      */
     public void operatorControl() {
-        myRobot.setSafetyEnabled(true);
+        myRobot.setSafetyEnabled(false);
+        revRobot.setSafetyEnabled(false);
         currentMode = START_MODE;
         newMode = currentMode;
         resetAll();
@@ -258,6 +263,9 @@ public class Robot extends SampleRobot {
     		boolean trigger = rightStick.getRawButton(1);
             boolean b3 = rightStick.getRawButton(3);
             boolean b2 = rightStick.getRawButton(2);
+            double zinput = rightStick.getZ();
+            FourBarPowerMultiplier = (((-zinput) + 1) /2) +1;
+            
             
             if (input < -0.3) {
             	// push joystick forward
@@ -892,7 +900,7 @@ public class Robot extends SampleRobot {
     			}
         		FourBar.changeControlMode(CANTalon.TalonControlMode.PercentVbus);
         		FourBar.enable();
-    			FourBar.set(-0.5);
+    			FourBar.set(-0.5 * FourBarPowerMultiplier);
     		} else {
     			FourBarMotorMoveCounter = 0;
     			FourBar.set(0);
@@ -911,7 +919,7 @@ public class Robot extends SampleRobot {
     			}
         		FourBar.changeControlMode(CANTalon.TalonControlMode.PercentVbus);
         		FourBar.enable();
-    			FourBar.set(0.5);
+    			FourBar.set(0.5 * FourBarPowerMultiplier);
     		} else {
     			FourBarMotorMoveCounter = 0;
     			FourBar.set(0);
