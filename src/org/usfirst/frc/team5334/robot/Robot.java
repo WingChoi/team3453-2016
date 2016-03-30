@@ -9,6 +9,7 @@ import edu.wpi.first.wpilibj.CANTalon;
 import edu.wpi.first.wpilibj.RobotDrive;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.Joystick;
+import edu.wpi.first.wpilibj.Relay;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.Victor;
 import edu.wpi.first.wpilibj.CameraServer;
@@ -88,6 +89,12 @@ public class Robot extends SampleRobot {
     final int PICKUP_MODE = 2;
     final int START_MODE = 3;
     
+    final double ROLLER_IN_POWER = -1.0;  // negative
+    final double ROLLER_OUT_POWER = +1.0; // positive
+    
+    final double BOULDER_IN_POWER = -0.5;  // negative
+    final double BOULDER_OUT_POWER = +0.5; // positive
+    
     int currentMode = -1;
     int pastMode = -1;
     int newMode = -1;
@@ -97,6 +104,7 @@ public class Robot extends SampleRobot {
     int TiltTableMotorMoveCounter = 0;
     boolean FourBarMotorStop = false;
     boolean TiltTableMotorStop = false;
+    boolean overrideAllLimit = false;
     
     boolean shootLowGoal = false;
     
@@ -104,12 +112,17 @@ public class Robot extends SampleRobot {
     final int DEFAULT_BOULDER_TIMEOUT = 63;
     int boulderTimeOut = DEFAULT_BOULDER_TIMEOUT;
     
+    Relay light;
+    boolean lightOn = false;
+    boolean cycleLight = false;
+    int cycleLightCount = 0;
+    
     CameraServer camera;
     
     double FourBarPowerMultiplier = 0;
     
-    final String defaultAuto = "Default";
-    final String customAuto = "My Auto";
+    final String forwardAuto = "Forward";
+    final String reverseAuto = "Reverse";
     SendableChooser chooser;
 
     public Robot() {
@@ -167,6 +180,8 @@ public class Robot extends SampleRobot {
         currentMode = START_MODE;
         pastMode = -1;
         
+        light = new Relay(0);
+        
         
 		//camera = CameraServer.getInstance();
 		//camera.setQuality(25);
@@ -176,8 +191,8 @@ public class Robot extends SampleRobot {
     
     public void robotInit() {
         chooser = new SendableChooser();
-        chooser.addDefault("Default Auto", defaultAuto);
-        chooser.addObject("My Auto", customAuto);
+        chooser.addDefault("Forward Auto", forwardAuto);
+        chooser.addObject("Reverse Auto", reverseAuto);
         SmartDashboard.putData("Auto modes", chooser);
         
         // switch the PID control mode for the FourBar Talon SRX to position seeking
@@ -203,6 +218,13 @@ public class Robot extends SampleRobot {
 		currentMode = START_MODE;
 		pastMode = -1;
 		
+		lightOn = false;
+		light.setDirection(Relay.Direction.kForward);
+		light.set(Relay.Value.kOff);
+		
+		cycleLight = false;
+		cycleLightCount = 0;
+		
     }
 
 	/**
@@ -221,19 +243,28 @@ public class Robot extends SampleRobot {
 		System.out.println("Auto selected: " + autoSelected);
     	
     	switch(autoSelected) {
-    	case customAuto:
+    	case reverseAuto:
             myRobot.setSafetyEnabled(false);
             revRobot.setSafetyEnabled(false);
-            myRobot.drive(-0.5, 1.0);	// spin at half speed
-            Timer.delay(2.0);		//    for 2 seconds
+            
+            runHighGoalAutonomous(true);
+            
+            Timer.delay(2.5);
+            myRobot.drive(0.9, +0.2);	// reverse at half speed
+            Timer.delay(2.0);		//    for 5 seconds
+            
+            runHighGoalAutonomous(true);
+            
+            Timer.delay(2.0);
             myRobot.drive(0.0, 0.0);	// stop robot
+            runHighGoalAutonomous(false);
             break;
-    	case defaultAuto:
+    	case forwardAuto:
     	default:
             myRobot.setSafetyEnabled(false);
             revRobot.setSafetyEnabled(false);
-            myRobot.drive(-0.5, 0.0);	// drive forwards half speed
-            Timer.delay(2.0);		//    for 2 seconds
+            myRobot.drive(-0.7, -0.2);	// drive forwards half speed
+            Timer.delay(5.0);		//    for 5 seconds
             myRobot.drive(0.0, 0.0);	// stop robot
             break;
     	}
@@ -252,11 +283,7 @@ public class Robot extends SampleRobot {
         while (isOperatorControl() && isEnabled()) {
             //myRobot.arcadeDrive(stick); // drive with arcade style (use right stick)
             
-            if (leftStick.getRawButton(1)) {  // trigger
-            	revRobot.arcadeDrive(leftStick);
-            } else {
-            	myRobot.arcadeDrive(leftStick);
-            }
+        	drive();
             
             // Operator Switch Mode
             double input = rightStick.getY();
@@ -267,10 +294,10 @@ public class Robot extends SampleRobot {
             FourBarPowerMultiplier = (((-zinput) + 1) /2) +1;
             
             
-            if (input < -0.3) {
+            if (input < -0.7) {
             	// push joystick forward
             	newMode = LOW_GOAL_MODE;
-            } else if (input > 0.3) {
+            } else if (input > 0.7) {
             	// pull joystick back
             	newMode = HIGH_GOAL_MODE;
             } else if (b3) {
@@ -555,6 +582,77 @@ public class Robot extends SampleRobot {
         }
     }
     
+    public void drive() {
+    	//boolean driverTrigger = leftStick.getRawButton(1);
+    	final double ROTATE = 0.25;
+    	
+    	// Logitech Attack 3
+		double x = leftStick.getX();
+		double y = leftStick.getY();
+    	boolean driverTrigger = leftStick.getTrigger();
+    	
+    	// Logitech F310 Gamepad
+    	double ly = leftStick.getRawAxis(1); // Left Y
+    	double rx = leftStick.getRawAxis(4); // Right X
+    	double ry = leftStick.getRawAxis(5); // Right Y
+    	boolean leftShoulder = leftStick.getRawButton(5);
+    	boolean rightShoulder = leftStick.getRawButton(6);
+    	
+    	double xalt = 0;
+    	/*
+    	if (leftShoulder || (currentMode == PICKUP_MODE)) {
+    		ly = ly * 0.6;
+    	}
+    	if (rightShoulder) {
+    		ly = ly * 3;
+    	}
+    	if (ly > 0.1 || ly < -0.1) {
+    		rx = rx - 0.1;
+    	}
+    	*/
+    	
+    	if (leftStick.getRawAxis(2) > 0.2 || leftStick.getRawAxis(3) > 0.2) {
+    		driverTrigger = true;
+    	}
+    	
+    	boolean driveNormal = true;
+    	
+    	if (driveNormal) {
+            if (driverTrigger) {  // trigger
+            	revRobot.arcadeDrive(ly, rx);
+            	//revRobot.tankDrive(ly, ry);
+            	
+            } else {
+            	myRobot.arcadeDrive(ly, rx);
+            	//myRobot.tankDrive(ly, ry);
+            	
+            }
+            
+            return;
+    	}
+    	
+    	// corrected drive aka not Normal
+    	if ((x > -0.10) && (x < 0.10)) {
+    		x = 0;
+    	}
+		if ((y > -0.10) && (y < 0.10)) {
+			xalt = x;
+			y = 0;
+		} else if ((y > -0.85) && (y < 0.85)) {
+			xalt = (x - ROTATE);
+		} else {
+			xalt = x;
+		}
+    	
+        if (driverTrigger) {  // trigger
+        	//revRobot.arcadeDrive(leftStick, true);
+        	revRobot.drive(y, xalt);	// reverse at half speed
+        } else {
+        	//myRobot.arcadeDrive(leftStick, true);
+        	myRobot.drive(y, xalt);	// reverse at half speed
+        }
+    }
+    
     public void resetAll () {
     	pastMode = currentMode;
     	currentMode = newMode;
@@ -584,6 +682,15 @@ public class Robot extends SampleRobot {
 		
 		shootLowGoal = false;
 		boulderTimeOut = DEFAULT_BOULDER_TIMEOUT;
+		
+		overrideAllLimit = false;
+		
+		lightOn = false;
+		light.setDirection(Relay.Direction.kForward);
+		light.set(Relay.Value.kOff);
+		
+		cycleLight = false;
+		cycleLightCount = 0;
     }
     
     public void runStartMode () {
@@ -630,6 +737,33 @@ public class Robot extends SampleRobot {
     	runShooterOutSequence();
     }
 
+    public void runHighGoalAutonomous(boolean run) {
+    	
+    	if (run) {
+        	FourBarUp = false;
+        	FourBarDown = true;
+        	
+        	tiltTableUp = true;
+        	tiltTableDown = false;
+    	} else {
+    		
+    		// if not running, stop all
+        	FourBarUp = false;
+        	FourBarDown = false;
+        	
+        	tiltTableUp = false;
+        	tiltTableDown = false;
+    		
+    	}
+    	//FourBarUp = false;
+    	//FourBarDown = true;
+    	runFourBarUpDown();
+
+    	//tiltTableUp = true;
+    	//tiltTableDown = false;
+    	runTiltTableUpDown();
+    }
+    
     public void runHighGoalMode () {
     	// FourBar Down
     	// tiltTable Up
@@ -738,6 +872,9 @@ public class Robot extends SampleRobot {
     	
     	if (isBoulderIn || boulderLimitOverride) {
     	
+    		lightOn = true;
+    		runLight();
+    		
         	if (trigger) {
         		// trigger in, start shooter motors, reset boulderOutCount
         		shooterOutClick = true;
@@ -777,6 +914,9 @@ public class Robot extends SampleRobot {
     			boulderOut = false;
     			boulderIn = false;
     			runBoulder();
+    			
+    			lightOn = false;
+    			runLight();
     		}
     		
     	}
@@ -784,11 +924,11 @@ public class Robot extends SampleRobot {
     
     public void runRoller() {
     	if (rollerOut) {
-    		roller.set(1.0);
+    		roller.set(ROLLER_OUT_POWER);
     		rollerIn = false;
     	}
     	if (rollerIn) {
-    		roller.set(-1.0);
+    		roller.set(ROLLER_IN_POWER);
     		rollerOut = false;
     	}
     	if (!rollerOut && !rollerIn) {
@@ -798,11 +938,11 @@ public class Robot extends SampleRobot {
     
     public void runBoulder() {
     	if (boulderOut) {
-    		boulderHolder.set(0.5);
+    		boulderHolder.set(BOULDER_OUT_POWER);
     		boulderIn = false;
     	}
     	if (boulderIn) {
-    		boulderHolder.set(-0.5);
+    		boulderHolder.set(BOULDER_IN_POWER);
     		boulderOut = false;
     	}
     	if (!boulderOut && !boulderIn) {
@@ -881,6 +1021,16 @@ public class Robot extends SampleRobot {
     public void runFourBarUpDown () {
 		// FourBar up  = pull joystick back
     	
+    	if (rightStick.getRawButton(11)) {
+    		overrideAllLimit = true;
+    	}
+    	boolean forwardLimit = fourBarForwardLimit.get();
+    	boolean rearLimit = fourBarRearLimit.get();
+    	if (overrideAllLimit) {
+    		forwardLimit = false;
+    		rearLimit = false;
+    	}
+    	    	
     	if (FourBarMotorStop) {
     		FourBar.set(0);
     		FourBar.disable();
@@ -889,7 +1039,7 @@ public class Robot extends SampleRobot {
     	
     	if (FourBarUp) {
     		
-    		if (!fourBarRearLimit.get()) {
+    		if (!rearLimit) {
     			FourBarMotorMoveCounter++; 
     			if (FourBarMotorMoveCounter > FIVE_SECONDS) { 
     				// stop motor after 5 seconds, then override limit switch
@@ -908,7 +1058,7 @@ public class Robot extends SampleRobot {
     		}
     	} else if (FourBarDown) {
     		
-    		if (!fourBarForwardLimit.get()) {
+    		if (!forwardLimit) {
     			FourBarMotorMoveCounter++; 
     			if (FourBarMotorMoveCounter > FIVE_SECONDS) { 
     				// stop motor after 5 seconds, then override limit switch
@@ -949,6 +1099,17 @@ public class Robot extends SampleRobot {
     public void runTiltTableUpDown () {
        	// tileTable up and down
     	
+    	if (rightStick.getRawButton(11)) {
+    		overrideAllLimit = true;
+    	}
+    	
+    	boolean forwardLimit = tiltTableForwardLimit.get();
+    	boolean rearLimit = tiltTableRearLimit.get();
+    	if (overrideAllLimit) {
+    		forwardLimit = false;
+    		rearLimit = false;
+    	}
+    	
 /*    	
     	if (rightStick.getRawButton(3)) {
     		// tiltTable down
@@ -974,7 +1135,7 @@ public class Robot extends SampleRobot {
     	}
     	
     	if (tiltTableUp) {
-    		if (!tiltTableRearLimit.get()) {
+    		if (!rearLimit) {
     			TiltTableMotorMoveCounter++; 
     			if (TiltTableMotorMoveCounter > FIVE_SECONDS) { 
     				// stop motor after 5 seconds, then override limit switch
@@ -988,7 +1149,7 @@ public class Robot extends SampleRobot {
     			tiltTable.set(0);
     		}
     	} else if (tiltTableDown) {
-    		if (!tiltTableForwardLimit.get()) {
+    		if (!forwardLimit) {
     			TiltTableMotorMoveCounter++; 
     			if (TiltTableMotorMoveCounter > FIVE_SECONDS) { 
     				// stop motor after 5 seconds, then override limit switch
@@ -1004,6 +1165,35 @@ public class Robot extends SampleRobot {
     	} else {
     		TiltTableMotorMoveCounter = 0;
     		tiltTable.set(0);
+    	}
+    }
+    
+    public void runLight () {
+    	
+    	boolean cycleLightButton = rightStick.getRawButton(5);
+    	
+    	if (cycleLightButton && lightOn) {
+    		cycleLight = true;
+    		cycleLightCount = 0;
+    	}
+  
+    	if (cycleLight && lightOn) {
+    		light.set(Relay.Value.kOff);
+    		cycleLightCount++;
+    	
+	    	if (cycleLightCount > 30) {
+	    		cycleLight = false;
+	    		cycleLightCount = 0;
+	    		light.set(Relay.Value.kOn);    		
+	    	}
+	    	
+	    	return;
+    	}
+    	
+    	if (lightOn) {
+    		light.set(Relay.Value.kOn);
+    	} else {
+    		light.set(Relay.Value.kOff);
     	}
     }
     
